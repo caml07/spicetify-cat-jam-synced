@@ -11,10 +11,15 @@ export interface CatJamConfig {
   defaultBpm: number;
 }
 
+/** Player snapshot at the time of an event. */
+export interface PlaybackState {
+  progressMs: number;
+  isPlaying: boolean;
+}
+
 interface Deps {
   getConfig(): CatJamConfig;
   fetchAnalysis(uri: string): Promise<AnalysisResult | null>;
-  nowMs?(): number;
 }
 
 const SEEK_THRESHOLD_MS = 500;
@@ -28,11 +33,13 @@ export function safePlay(video: HTMLVideoElement): void {
 /**
  * Single owner of synchronization state: current track identity, analysis,
  * beat timers and the video element. All async results are guarded by a
- * generation counter so late responses can never overwrite a newer track.
+ * generation counter plus uri check so late responses can never overwrite
+ * a newer track.
  */
 export class CatJamController {
   private video: HTMLVideoElement | null = null;
   private generation = 0;
+  private currentUri: string | undefined;
   private tempoBpm: number | undefined;
   private beats: Beat[] | undefined;
   private beatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -45,66 +52,70 @@ export class CatJamController {
     this.applyRate();
   }
 
-  onSongChange(uri: string | undefined, progressMs = 0, isPlaying = true): void {
+  onSongChange(uri: string | undefined, state: PlaybackState): void {
     this.generation++;
+    this.currentUri = uri;
     this.clearBeatTimer();
     this.tempoBpm = undefined;
     this.beats = undefined;
-    this.lastProgressMs = progressMs;
+    this.lastProgressMs = state.progressMs;
 
     if (!uri) return;
-    if (this.video && isPlaying) safePlay(this.video);
+    if (this.video && state.isPlaying) safePlay(this.video);
 
     const gen = this.generation;
     void this.deps.fetchAnalysis(uri).then((result) => {
-      if (gen !== this.generation) return; // stale: track changed meanwhile
+      if (gen !== this.generation || uri !== this.currentUri) return; // stale
       this.tempoBpm = result?.tempoBpm;
       this.beats = Array.isArray(result?.beats) ? result!.beats : undefined;
       this.applyRate();
-      this.resync(progressMs, isPlaying);
+      this.resync(state.progressMs, state.isPlaying);
     });
   }
 
-  onPlayPause(isPlaying: boolean, progressMs = 0): void {
+  onPlayPause(state: PlaybackState): void {
     this.clearBeatTimer();
-    if (!isPlaying) {
+    if (!state.isPlaying) {
       this.video?.pause();
       return;
     }
-    this.resync(progressMs, true);
+    this.resync(state.progressMs, true);
   }
 
-  onProgress(progressMs: number, isPlaying = true): void {
-    const jumped = Math.abs(progressMs - this.lastProgressMs) >= SEEK_THRESHOLD_MS;
-    this.lastProgressMs = progressMs;
+  onProgress(state: PlaybackState): void {
+    const jumped =
+      Math.abs(state.progressMs - this.lastProgressMs) >= SEEK_THRESHOLD_MS;
+    this.lastProgressMs = state.progressMs;
     if (jumped) {
       this.clearBeatTimer();
-      this.resync(progressMs, isPlaying);
+      this.resync(state.progressMs, state.isPlaying);
     }
   }
 
   private applyRate(): void {
     if (!this.video) return;
-    this.video.playbackRate = computePlaybackRate(this.tempoBpm, this.deps.getConfig().defaultBpm);
+    this.video.playbackRate = computePlaybackRate(
+      this.tempoBpm,
+      this.deps.getConfig().defaultBpm
+    );
   }
 
   private resync(progressMs: number, isPlaying: boolean): void {
     const video = this.video;
     if (!video || !isPlaying) return;
-    const now = () => this.deps.nowMs?.() ?? Date.now();
-    const startedAt = now();
     const delaySeconds = nextBeatDelaySeconds(this.beats ?? null, progressMs / 1000);
     this.clearBeatTimer();
+    // Re-align the loop with the track position regardless of beats.
+    video.currentTime = 0;
     if (delaySeconds === null) {
       safePlay(video);
       return;
     }
-    const elapsed = now() - startedAt;
     this.beatTimer = setTimeout(() => {
       this.beatTimer = null;
       video.currentTime = 0;
       safePlay(video);
-    }, Math.max(0, delaySeconds * 1000 - elapsed));
+    }, Math.max(0, delaySeconds * 1000));
   }
 
   private clearBeatTimer(): void {

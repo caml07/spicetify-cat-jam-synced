@@ -1,5 +1,11 @@
 import { SettingsSection } from "spcr-settings";
-import { CatJamController, AnalysisResult, CatJamConfig, safePlay } from "./controller";
+import {
+  CatJamController,
+  AnalysisResult,
+  CatJamConfig,
+  PlaybackState,
+  safePlay,
+} from "./controller";
 import { DEFAULT_VIDEO_BPM } from "./tempo";
 
 // ponytail: pinned to a commit SHA so the default asset is immutable
@@ -7,7 +13,8 @@ const DEFAULT_VIDEO_URL =
   "https://github.com/caml07/spicetify-cat-jam-synced/raw/e7bfd49fcc13457bbc98e696294cf5cf43eb6c31/src/resources/catjam.webm";
 
 const VIDEO_ID = "catjam-webm";
-const CONTAINER_SELECTORS = [".main-nowPlayingBar-right", ".main-yourLibraryX-libraryItemContainer"];
+const BOTTOM_PLAYER_SELECTOR = ".main-nowPlayingBar-right";
+const LEFT_LIBRARY_SELECTOR = ".main-yourLibraryX-libraryItemContainer";
 const OBSERVER_TIMEOUT_MS = 30_000;
 
 const settings = new SettingsSection("Cat-Jam Settings", "catjam-settings");
@@ -18,6 +25,13 @@ function getConfig(): CatJamConfig {
   return {
     videoUrl: String(settings.getFieldValue("catjam-webm-link") || "") || DEFAULT_VIDEO_URL,
     defaultBpm: Number(settings.getFieldValue("catjam-webm-bpm")) || DEFAULT_VIDEO_BPM,
+  };
+}
+
+function playerState(): PlaybackState {
+  return {
+    progressMs: Spicetify.Player.getProgress(),
+    isPlaying: Spicetify.Player.isPlaying(),
   };
 }
 
@@ -43,12 +57,20 @@ async function fetchAnalysis(uri: string): Promise<AnalysisResult | null> {
   return null;
 }
 
-function buildVideo(config: CatJamConfig, position: string): HTMLVideoElement {
-  const leftSize = Number(settings.getFieldValue("catjam-webm-position-left-size")) || 100;
-  const style =
-    position === "Bottom (Player)"
-      ? "width: 65px; height: 65px;"
-      : `width: ${leftSize}%; max-width: 300px; height: auto; max-height: 100%; position: absolute; bottom: 0; pointer-events: none; z-index: 1;`;
+/** Mounts the video into the first available container; null if UI changed shape. */
+async function mountVideo(): Promise<HTMLVideoElement | null> {
+  const existing = document.getElementById(VIDEO_ID);
+  if (existing) existing.remove();
+
+  const position = String(settings.getFieldValue("catjam-webm-position") || "");
+  const isBottomPlayer = position === "Bottom (Player)";
+  const selector = isBottomPlayer ? BOTTOM_PLAYER_SELECTOR : LEFT_LIBRARY_SELECTOR;
+
+  const leftSize =
+    Number(settings.getFieldValue("catjam-webm-position-left-size")) || 100;
+  const style = isBottomPlayer
+    ? "width: 65px; height: 65px;"
+    : `width: ${leftSize}%; max-width: 300px; height: auto; max-height: 100%; position: absolute; bottom: 0; pointer-events: none; z-index: 1;`;
 
   const video = document.createElement("video");
   video.id = VIDEO_ID;
@@ -58,18 +80,7 @@ function buildVideo(config: CatJamConfig, position: string): HTMLVideoElement {
   video.preload = "auto";
   video.setAttribute("aria-hidden", "true");
   video.setAttribute("style", style);
-  video.src = config.videoUrl;
-  return video;
-}
-
-/** Mounts the video into the first available container; null if UI changed shape. */
-async function mountVideo(): Promise<HTMLVideoElement | null> {
-  const existing = document.getElementById(VIDEO_ID);
-  if (existing) existing.remove();
-
-  const position = String(settings.getFieldValue("catjam-webm-position") || "");
-  const selector = position === "Bottom (Player)" ? CONTAINER_SELECTORS[0] : CONTAINER_SELECTORS[1];
-  const video = buildVideo(getConfig(), position);
+  video.src = getConfig().videoUrl;
 
   let container = document.querySelector(selector);
 
@@ -111,7 +122,11 @@ async function main() {
   }
   console.log("[CAT-JAM] Extension loaded.");
 
-  settings.addInput("catjam-webm-link", "Custom webM video URL (Link does not work if no video shows)", "");
+  settings.addInput(
+    "catjam-webm-link",
+    "Custom webM video URL (Link does not work if no video shows)",
+    ""
+  );
   settings.addInput("catjam-webm-bpm", "Custom default BPM of webM video (Example: 135.48)", "");
   settings.addDropDown(
     "catjam-webm-position",
@@ -125,15 +140,14 @@ async function main() {
     ""
   );
   settings.addButton("catjam-reload", "Reload custom values", "Save and reload", () => {
-    void mountVideo();
+    void mountVideo().then((video) => controller.setVideo(video));
   });
   void settings.pushSettings();
 
   const controller = new CatJamController({ getConfig, fetchAnalysis });
 
   async function ensureMounted(): Promise<void> {
-    const mounted = await mountVideo();
-    controller.setVideo(mounted);
+    controller.setVideo(await mountVideo());
   }
 
   await ensureMounted();
@@ -142,19 +156,15 @@ async function main() {
     if (!document.getElementById(VIDEO_ID)?.isConnected) {
       void ensureMounted(); // Spotify rebuilt its DOM; remount lazily
     }
-    controller.onSongChange(
-      Spicetify.Player.data?.item?.uri,
-      Spicetify.Player.getProgress(),
-      Spicetify.Player.isPlaying()
-    );
+    controller.onSongChange(Spicetify.Player.data?.item?.uri, playerState());
   });
 
   Spicetify.Player.addEventListener("onplaypause", () => {
-    controller.onPlayPause(Spicetify.Player.isPlaying(), Spicetify.Player.getProgress());
+    controller.onPlayPause(playerState());
   });
 
   Spicetify.Player.addEventListener("onprogress", () => {
-    controller.onProgress(Spicetify.Player.getProgress(), Spicetify.Player.isPlaying());
+    controller.onProgress(playerState());
   });
 }
 
