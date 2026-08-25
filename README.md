@@ -8,6 +8,16 @@ Make a cat appear next to your progress bar, jamming along with your music synch
 
 # Changelog 📋
 
+<h3>v1.3.0</h3>
+
+- Rewritten synchronization core: a single controller owns track identity, audio analysis, beat timers and the video element.
+- Fixed race where analysis of the previous song could override the current one (results are guarded by track generation).
+- Pending beat timers are now cancelled on track change, pause and seek; progress events are coalesced so only real seeks resync.
+- BPM sync now uses only the track's real tempo (`getAudioData`), with a safe fallback to normal speed when no analysis is available.
+- Removed the deprecated Spotify `audio-features` endpoint and the danceability/energy based BPM methods (those two settings dropdowns are gone).
+- Video autoplay/load errors are handled silently; the extension disables itself cleanly if Spotify's UI changes shape.
+- Default webM asset is pinned to an immutable commit URL.
+
 <h3>v1.2.5</h3>
 
 - Added better BPM calculation for songs based on songs danceability and energy.
