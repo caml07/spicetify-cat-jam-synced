@@ -127,6 +127,15 @@ async function main() {
   }
   console.log("[CAT-JAM] Extension loaded.");
 
+  const controller = new CatJamController({ getConfig, fetchAnalysis });
+
+  // Single-flight: startup mount, songchange remounts and the settings
+  // reload button can overlap while waiting for the player UI; without
+  // this, two videos get inserted.
+  const ensureMounted = singleFlight(async () => {
+    controller.setVideo(await mountVideo());
+  });
+
   settings.addInput(
     "catjam-webm-link",
     "Custom webM video URL (Link does not work if no video shows)",
@@ -145,17 +154,10 @@ async function main() {
     ""
   );
   settings.addButton("catjam-reload", "Reload custom values", "Save and reload", () => {
-    void mountVideo().then((video) => controller.setVideo(video));
+    void ensureMounted();
   });
   void settings.pushSettings();
 
-  const controller = new CatJamController({ getConfig, fetchAnalysis });
-
-  // Single-flight: startup mount and songchange remounts can overlap while
-  // waiting for the player UI; without this, two videos get inserted.
-  const ensureMounted = singleFlight(async () => {
-    controller.setVideo(await mountVideo());
-  });
 
   await ensureMounted();
 
