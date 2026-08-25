@@ -172,3 +172,45 @@ describe("CatJamController", () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 });
+
+import { singleFlight } from "./controller";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("singleFlight", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("concurrent calls share one invocation", async () => {
+    let calls = 0;
+    const mount = singleFlight(async () => {
+      calls++;
+      await sleep(10);
+      return "video";
+    });
+    const [a, b] = [mount(), mount()];
+    expect(calls).toBe(1);
+    expect(await a).toBe("video");
+    expect(await b).toBe("video");
+  });
+
+  it("allows a new invocation after settling", async () => {
+    let calls = 0;
+    const mount = singleFlight(async () => {
+      calls++;
+      return calls;
+    });
+    await mount();
+    expect(await mount()).toBe(2);
+  });
+
+  it("re-arms after rejection", async () => {
+    let fail = true;
+    const mount = singleFlight(async () => {
+      if (fail) throw new Error("boom");
+      return "ok";
+    });
+    await expect(mount()).rejects.toThrow("boom");
+    fail = false;
+    expect(await mount()).toBe("ok");
+  });
+});

@@ -30,6 +30,19 @@ export function safePlay(video: HTMLVideoElement): void {
   if (p && typeof p.catch === "function") p.catch(() => {});
 }
 
+/** Collapses concurrent calls into one in-flight invocation. */
+export function singleFlight<T>(fn: () => Promise<T>): () => Promise<T> {
+  let inFlight: Promise<T> | null = null;
+  return () => {
+    if (!inFlight) {
+      inFlight = fn().finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  };
+}
+
 /**
  * Single owner of synchronization state: current track identity, analysis,
  * beat timers and the video element. All async results are guarded by a

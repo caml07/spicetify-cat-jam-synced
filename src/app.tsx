@@ -5,6 +5,7 @@ import {
   CatJamConfig,
   PlaybackState,
   safePlay,
+  singleFlight,
 } from "./controller";
 import { DEFAULT_VIDEO_BPM } from "./tempo";
 
@@ -111,6 +112,10 @@ async function mountVideo(): Promise<HTMLVideoElement | null> {
     return null;
   }
 
+  // Dedupe here (not at function start): parallel mounts both pass the
+  // early check, so whoever inserts second must clear the first.
+  document.getElementById(VIDEO_ID)?.remove();
+
   container.insertBefore(video, container.firstChild);
   if (Spicetify.Player.isPlaying()) safePlay(video);
   return video;
@@ -146,9 +151,11 @@ async function main() {
 
   const controller = new CatJamController({ getConfig, fetchAnalysis });
 
-  async function ensureMounted(): Promise<void> {
+  // Single-flight: startup mount and songchange remounts can overlap while
+  // waiting for the player UI; without this, two videos get inserted.
+  const ensureMounted = singleFlight(async () => {
     controller.setVideo(await mountVideo());
-  }
+  });
 
   await ensureMounted();
 
