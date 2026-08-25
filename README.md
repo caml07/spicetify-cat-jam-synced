@@ -6,6 +6,10 @@ Make a cat appear next to your progress bar, jamming along with your music synch
 
 > ⚙ are located at the bottom of the regular Spotify settings.
 
+## Credits 🐈
+
+Maintained fork of [BlafKing/spicetify-cat-jam-synced](https://github.com/BlafKing/spicetify-cat-jam-synced) by [@BlafKing](https://github.com/BlafKing), who created the original extension and cat video. This fork modernizes the synchronization core (track-identity guards, timer lifecycle, tempo-only BPM) and keeps it compatible with current Spotify versions. MIT licensed.
+
 # Changelog 📋
 
 <h3>v1.3.0</h3>
